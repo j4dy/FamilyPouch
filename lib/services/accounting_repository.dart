@@ -305,23 +305,6 @@ class AccountingRepository extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       
-      // Clean start flag: if fp_initialized_v2 is missing, reset any old test data
-      final isV2 = prefs.getBool('fp_clean_v2') ?? false;
-      if (!isV2) {
-        await prefs.clear();
-        await prefs.setBool('fp_clean_v2', true);
-        _expenses = [];
-        _cashTopUps = [];
-        _claims = [];
-        final def = createDefaultCurrentCycle();
-        _cycles = [def];
-        _selectedCycleId = def.id;
-        _saveToStorage();
-        _isInitialized = true;
-        notifyListeners();
-        return;
-      }
-
       final expJson = prefs.getString('fp_expenses');
       final topUpJson = prefs.getString('fp_topups');
       final claimsJson = prefs.getString('fp_claims');
@@ -355,9 +338,18 @@ class AccountingRepository extends ChangeNotifier {
         _cycles = [createDefaultCurrentCycle()];
       }
 
-      if (_cycles.isNotEmpty) {
-        _selectedCycleId = _cycles.first.id;
+      // Force purge any legacy mock test data
+      _expenses.removeWhere((e) => e.id.startsWith('exp-') || e.cycleId == 'cycle-aug-2026');
+      _cashTopUps.removeWhere((t) => t.id.startsWith('topup-'));
+      _claims.removeWhere((c) => c.id.startsWith('claim-1') || c.id.startsWith('claim-past-1'));
+      _cycles.removeWhere((c) => c.id == 'cycle-aug-2026' || c.id == 'cycle-jul-2026');
+
+      if (_cycles.isEmpty) {
+        _cycles = [createDefaultCurrentCycle()];
       }
+      _selectedCycleId = _cycles.first.id;
+
+      await _saveToStorage();
     } catch (e) {
       debugPrint('Error loading storage: $e');
       _expenses = [];
