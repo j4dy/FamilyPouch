@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "familypouch-j4dy"
-  }
+  },
+  "targets": {
+    "familypouch-j4dy": {
+      "hosting": {
+        "live": [
+          "familypouch-live"
+        ],
+        "default": [
+          "familypouch-j4dy"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
