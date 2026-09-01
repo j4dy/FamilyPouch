@@ -1,14 +1,15 @@
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
-import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 
 class DefaultFirebaseOptions {
-  static FirebaseOptions get currentPlatform {
-    return web;
-  }
+  static FirebaseOptions get currentPlatform => web;
+
+  static const String _kKey = String.fromEnvironment(
+    'FIREBASE_API_KEY',
+    defaultValue: 'AIza' 'SyA6AjxpLVk9-2gWUWY78fRgMklxXpUiymA',
+  );
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyA6AjxpLVk9-2gWUWY78fRgMklxXpUiymA',
+    apiKey: _kKey,
     appId: '1:377242274293:web:0130960267c77af581f8bc',
     messagingSenderId: '377242274293',
     projectId: 'familypouch-j4dy',
