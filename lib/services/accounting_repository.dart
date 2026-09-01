@@ -11,9 +11,13 @@ import '../models/expense.dart';
 import '../models/cash_topup.dart';
 import '../models/reimbursement_claim.dart';
 import '../models/settlement_cycle.dart';
+import '../models/family_config.dart';
 
 class AccountingRepository extends ChangeNotifier {
+  String _familyId = 'j4dy';
+  FamilyConfig _familyConfig = FamilyConfig.defaultFamily();
   UserRole _currentUser = UserRole.mother;
+
   List<Expense> _expenses = [];
   List<CashTopUp> _cashTopUps = [];
   List<ReimbursementClaim> _claims = [];
@@ -26,7 +30,10 @@ class AccountingRepository extends ChangeNotifier {
   StreamSubscription? _topUpsSub;
   StreamSubscription? _claimsSub;
   StreamSubscription? _cyclesSub;
+  StreamSubscription? _familyConfigSub;
 
+  String get familyId => _familyId;
+  FamilyConfig get familyConfig => _familyConfig;
   UserRole get currentUser => _currentUser;
   List<Expense> get expenses => List.unmodifiable(_expenses);
   List<CashTopUp> get cashTopUps => List.unmodifiable(_cashTopUps);
@@ -68,8 +75,66 @@ class AccountingRepository extends ChangeNotifier {
   }
 
   Future<void> _initRepository() async {
+    // Check URL parameters for ?family=... if on web
+    String initialFamily = 'j4dy';
+    if (kIsWeb) {
+      try {
+        final queryParam = Uri.base.queryParameters['family'];
+        if (queryParam != null && queryParam.trim().isNotEmpty) {
+          initialFamily = FamilyConfig.normalizeId(queryParam);
+        }
+      } catch (_) {}
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedFamily = prefs.getString('fp_active_family_id');
+    if (kIsWeb && Uri.base.queryParameters.containsKey('family')) {
+      _familyId = initialFamily;
+    } else if (savedFamily != null && savedFamily.trim().isNotEmpty) {
+      _familyId = FamilyConfig.normalizeId(savedFamily);
+    } else {
+      _familyId = 'j4dy';
+    }
+
+    _familyConfig = FamilyConfig(
+      familyId: _familyId,
+      familyName: '$_familyId Family',
+      createdAt: DateTime.now(),
+    );
+
     await _loadFromLocalStorage();
     _initFirestoreSync();
+  }
+
+  /// Switch active family workspace
+  Future<void> switchFamily(String newFamilyId, {String? familyName}) async {
+    final cleanId = FamilyConfig.normalizeId(newFamilyId);
+    if (cleanId.isEmpty || cleanId == _familyId) return;
+
+    _familyId = cleanId;
+    _familyConfig = FamilyConfig(
+      familyId: cleanId,
+      familyName: familyName ?? '$cleanId Family',
+      createdAt: DateTime.now(),
+    );
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('fp_active_family_id', cleanId);
+
+    // Cancel old streams
+    await _cancelFirestoreSubscriptions();
+
+    // Reset collections & load new family data
+    _expenses = [];
+    _cashTopUps = [];
+    _claims = [];
+    final def = createDefaultCurrentCycle();
+    _cycles = [def];
+    _selectedCycleId = def.id;
+
+    await _loadFromLocalStorage();
+    _initFirestoreSync();
+    notifyListeners();
   }
 
   void switchUser(UserRole role) {
@@ -86,19 +151,52 @@ class AccountingRepository extends ChangeNotifier {
     }
   }
 
-  // --- Real-time Firestore Sync Engine ---
+  // --- Real-time Firestore Sync Engine (Scoped by Family ID) ---
+
+  DocumentReference<Map<String, dynamic>> get _familyDoc =>
+      FirebaseFirestore.instance.collection('families').doc(_familyId);
+
+  CollectionReference<Map<String, dynamic>> get _expensesCollection =>
+      _familyDoc.collection('expenses');
+
+  CollectionReference<Map<String, dynamic>> get _topUpsCollection =>
+      _familyDoc.collection('topups');
+
+  CollectionReference<Map<String, dynamic>> get _claimsCollection =>
+      _familyDoc.collection('claims');
+
+  CollectionReference<Map<String, dynamic>> get _cyclesCollection =>
+      _familyDoc.collection('cycles');
+
+  Future<void> _cancelFirestoreSubscriptions() async {
+    await _expensesSub?.cancel();
+    await _topUpsSub?.cancel();
+    await _claimsSub?.cancel();
+    await _cyclesSub?.cancel();
+    await _familyConfigSub?.cancel();
+  }
 
   void _initFirestoreSync() {
     try {
-      final db = FirebaseFirestore.instance;
+      // 0. Family Settings Stream
+      _familyConfigSub = _familyDoc.snapshots().listen((doc) {
+        if (doc.exists && doc.data() != null) {
+          _familyConfig = FamilyConfig.fromJson(doc.data()!);
+          notifyListeners();
+        } else {
+          // Initialize family config doc in Firestore
+          _familyDoc.set(_familyConfig.toJson(), SetOptions(merge: true));
+        }
+      }, onError: (e) {
+        debugPrint('Firestore family doc error: $e');
+      });
 
       // 1. Expenses Stream
-      _expensesSub = db.collection('family_expenses').snapshots().listen(
+      _expensesSub = _expensesCollection.snapshots().listen(
         (snapshot) {
           _isUsingFirestore = true;
           _expenses = snapshot.docs.map((doc) {
-            final data = doc.data();
-            return Expense.fromJson(data);
+            return Expense.fromJson(doc.data());
           }).toList();
           _expenses.sort((a, b) => b.date.compareTo(a.date));
           _saveToLocalStorage();
@@ -110,7 +208,7 @@ class AccountingRepository extends ChangeNotifier {
       );
 
       // 2. Cash Top-ups Stream
-      _topUpsSub = db.collection('family_topups').snapshots().listen(
+      _topUpsSub = _topUpsCollection.snapshots().listen(
         (snapshot) {
           _isUsingFirestore = true;
           _cashTopUps = snapshot.docs.map((doc) {
@@ -126,7 +224,7 @@ class AccountingRepository extends ChangeNotifier {
       );
 
       // 3. Claims Stream
-      _claimsSub = db.collection('family_claims').snapshots().listen(
+      _claimsSub = _claimsCollection.snapshots().listen(
         (snapshot) {
           _isUsingFirestore = true;
           _claims = snapshot.docs.map((doc) {
@@ -142,7 +240,7 @@ class AccountingRepository extends ChangeNotifier {
       );
 
       // 4. Cycles Stream
-      _cyclesSub = db.collection('family_cycles').snapshots().listen(
+      _cyclesSub = _cyclesCollection.snapshots().listen(
         (snapshot) {
           _isUsingFirestore = true;
           if (snapshot.docs.isNotEmpty) {
@@ -257,10 +355,7 @@ class AccountingRepository extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await FirebaseFirestore.instance
-          .collection('family_expenses')
-          .doc(expense.id)
-          .set(expense.toJson());
+      await _expensesCollection.doc(expense.id).set(expense.toJson());
     } catch (e) {
       debugPrint('Firestore addExpense fallback: $e');
     }
@@ -275,10 +370,7 @@ class AccountingRepository extends ChangeNotifier {
     }
 
     try {
-      await FirebaseFirestore.instance
-          .collection('family_expenses')
-          .doc(updated.id)
-          .set(updated.toJson());
+      await _expensesCollection.doc(updated.id).set(updated.toJson());
     } catch (e) {
       debugPrint('Firestore updateExpense fallback: $e');
     }
@@ -290,10 +382,7 @@ class AccountingRepository extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await FirebaseFirestore.instance
-          .collection('family_expenses')
-          .doc(expenseId)
-          .delete();
+      await _expensesCollection.doc(expenseId).delete();
     } catch (e) {
       debugPrint('Firestore deleteExpense fallback: $e');
     }
@@ -305,10 +394,7 @@ class AccountingRepository extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await FirebaseFirestore.instance
-          .collection('family_topups')
-          .doc(topUp.id)
-          .set(topUp.toJson());
+      await _topUpsCollection.doc(topUp.id).set(topUp.toJson());
     } catch (e) {
       debugPrint('Firestore addCashTopUp fallback: $e');
     }
@@ -345,10 +431,7 @@ class AccountingRepository extends ChangeNotifier {
           claimId: claimId,
         );
         try {
-          FirebaseFirestore.instance
-              .collection('family_expenses')
-              .doc(_expenses[i].id)
-              .set(_expenses[i].toJson());
+          _expensesCollection.doc(_expenses[i].id).set(_expenses[i].toJson());
         } catch (_) {}
       }
     }
@@ -357,10 +440,7 @@ class AccountingRepository extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await FirebaseFirestore.instance
-          .collection('family_claims')
-          .doc(claim.id)
-          .set(claim.toJson());
+      await _claimsCollection.doc(claim.id).set(claim.toJson());
     } catch (e) {
       debugPrint('Firestore submitClaim fallback: $e');
     }
@@ -393,10 +473,7 @@ class AccountingRepository extends ChangeNotifier {
           claimStatus: ClaimStatus.settled,
         );
         try {
-          FirebaseFirestore.instance
-              .collection('family_expenses')
-              .doc(_expenses[i].id)
-              .set(_expenses[i].toJson());
+          _expensesCollection.doc(_expenses[i].id).set(_expenses[i].toJson());
         } catch (_) {}
       }
     }
@@ -405,10 +482,7 @@ class AccountingRepository extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await FirebaseFirestore.instance
-          .collection('family_claims')
-          .doc(updated.id)
-          .set(updated.toJson());
+      await _claimsCollection.doc(updated.id).set(updated.toJson());
     } catch (e) {
       debugPrint('Firestore settleClaim fallback: $e');
     }
@@ -432,10 +506,7 @@ class AccountingRepository extends ChangeNotifier {
       notifyListeners();
 
       try {
-        await FirebaseFirestore.instance
-          .collection('family_cycles')
-          .doc(updated.id)
-          .set(updated.toJson());
+        await _cyclesCollection.doc(updated.id).set(updated.toJson());
       } catch (e) {
         debugPrint('Firestore closeCycle fallback: $e');
       }
@@ -452,23 +523,25 @@ class AccountingRepository extends ChangeNotifier {
 
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.clear();
+      await prefs.remove('fp_family_${_familyId}_expenses');
+      await prefs.remove('fp_family_${_familyId}_topups');
+      await prefs.remove('fp_family_${_familyId}_claims');
+      await prefs.remove('fp_family_${_familyId}_cycles');
     } catch (_) {}
 
     _saveToLocalStorage();
     notifyListeners();
 
     try {
-      final db = FirebaseFirestore.instance;
-      final exps = await db.collection('family_expenses').get();
+      final exps = await _expensesCollection.get();
       for (var d in exps.docs) {
         await d.reference.delete();
       }
-      final tops = await db.collection('family_topups').get();
+      final tops = await _topUpsCollection.get();
       for (var d in tops.docs) {
         await d.reference.delete();
       }
-      final clms = await db.collection('family_claims').get();
+      final clms = await _claimsCollection.get();
       for (var d in clms.docs) {
         await d.reference.delete();
       }
@@ -477,15 +550,15 @@ class AccountingRepository extends ChangeNotifier {
     }
   }
 
-  // --- Local Storage Layer ---
+  // --- Local Storage Layer (Scoped by Family ID) ---
 
   Future<void> _loadFromLocalStorage() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final expJson = prefs.getString('fp_v5_expenses');
-      final topUpJson = prefs.getString('fp_v5_topups');
-      final claimsJson = prefs.getString('fp_v5_claims');
-      final cyclesJson = prefs.getString('fp_v5_cycles');
+      final expJson = prefs.getString('fp_family_${_familyId}_expenses');
+      final topUpJson = prefs.getString('fp_family_${_familyId}_topups');
+      final claimsJson = prefs.getString('fp_family_${_familyId}_claims');
+      final cyclesJson = prefs.getString('fp_family_${_familyId}_cycles');
 
       if (expJson != null) {
         final List list = jsonDecode(expJson);
@@ -537,13 +610,13 @@ class AccountingRepository extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
-          'fp_v5_expenses', jsonEncode(_expenses.map((e) => e.toJson()).toList()));
+          'fp_family_${_familyId}_expenses', jsonEncode(_expenses.map((e) => e.toJson()).toList()));
       await prefs.setString(
-          'fp_v5_topups', jsonEncode(_cashTopUps.map((e) => e.toJson()).toList()));
+          'fp_family_${_familyId}_topups', jsonEncode(_cashTopUps.map((e) => e.toJson()).toList()));
       await prefs.setString(
-          'fp_v5_claims', jsonEncode(_claims.map((e) => e.toJson()).toList()));
+          'fp_family_${_familyId}_claims', jsonEncode(_claims.map((e) => e.toJson()).toList()));
       await prefs.setString(
-          'fp_v5_cycles', jsonEncode(_cycles.map((e) => e.toJson()).toList()));
+          'fp_family_${_familyId}_cycles', jsonEncode(_cycles.map((e) => e.toJson()).toList()));
     } catch (e) {
       debugPrint('Error saving storage: $e');
     }
@@ -555,6 +628,7 @@ class AccountingRepository extends ChangeNotifier {
     _topUpsSub?.cancel();
     _claimsSub?.cancel();
     _cyclesSub?.cancel();
+    _familyConfigSub?.cancel();
     super.dispose();
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/user_role.dart';
 import '../services/accounting_repository.dart';
+import 'switch_family_dialog.dart';
 
 class UserSwitchBanner extends StatelessWidget {
   const UserSwitchBanner({super.key});
@@ -18,8 +19,8 @@ class UserSwitchBanner extends StatelessWidget {
             Text('Clear All Records?'),
           ],
         ),
-        content: const Text(
-          'This will permanently erase all expenses, cash top-ups, claims, and reset the ledger to a completely empty state.',
+        content: Text(
+          'This will permanently erase all expenses, cash top-ups, and claims for family "${repo.familyId}".',
         ),
         actions: [
           TextButton(
@@ -51,6 +52,7 @@ class UserSwitchBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final repo = context.watch<AccountingRepository>();
     final currentUser = repo.currentUser;
+    final familyId = repo.familyId;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -65,13 +67,13 @@ class UserSwitchBanner extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final isCompact = constraints.maxWidth < 650;
+          final isSmall = constraints.maxWidth < 600;
 
           return Row(
             children: [
               // Logo / Brand
               Container(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(7),
                 decoration: BoxDecoration(
                   color: const Color(0xFF6366F1).withOpacity(0.15),
                   borderRadius: BorderRadius.circular(10),
@@ -81,32 +83,54 @@ class UserSwitchBanner extends StatelessWidget {
                 ),
                 child: const Text(
                   '👛',
-                  style: TextStyle(fontSize: 18),
+                  style: TextStyle(fontSize: 16),
                 ),
               ),
               const SizedBox(width: 8),
-              if (!isCompact)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'FamilyPouch',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                        letterSpacing: -0.3,
-                      ),
-                    ),
-                    Text(
-                      'Accounting & Receipt OCR',
-                      style: TextStyle(
-                        color: Colors.grey.shade400,
-                        fontSize: 10,
-                      ),
-                    ),
-                  ],
+              if (!isSmall)
+                const Text(
+                  'FamilyPouch',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                    letterSpacing: -0.3,
+                  ),
                 ),
+
+              const SizedBox(width: 8),
+
+              // Active Family Workspace Chip
+              InkWell(
+                onTap: () => SwitchFamilyDialog.show(context),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF6366F1).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFF6366F1).withOpacity(0.4),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.home, size: 13, color: Color(0xFF818CF8)),
+                      const SizedBox(width: 4),
+                      Text(
+                        familyId,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF818CF8),
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      const Icon(Icons.arrow_drop_down, size: 14, color: Color(0xFF818CF8)),
+                    ],
+                  ),
+                ),
+              ),
 
               const Spacer(),
 
@@ -129,9 +153,9 @@ class UserSwitchBanner extends StatelessWidget {
                       borderRadius: BorderRadius.circular(9),
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 200),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 5,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isSmall ? 6 : 8,
+                          vertical: 4,
                         ),
                         decoration: BoxDecoration(
                           color: isSelected
@@ -147,19 +171,21 @@ class UserSwitchBanner extends StatelessWidget {
                           children: [
                             Text(
                               role.emoji,
-                              style: const TextStyle(fontSize: 14),
+                              style: const TextStyle(fontSize: 13),
                             ),
-                            const SizedBox(width: 4),
-                            Text(
-                              role.displayName,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: isSelected
-                                    ? FontWeight.bold
-                                    : FontWeight.w500,
-                                color: isSelected ? Colors.white : Colors.grey.shade400,
+                            if (!isSmall) ...[
+                              const SizedBox(width: 4),
+                              Text(
+                                role.displayName,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: isSelected
+                                      ? FontWeight.bold
+                                      : FontWeight.w500,
+                                  color: isSelected ? Colors.white : Colors.grey.shade400,
+                                ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ),
@@ -176,18 +202,31 @@ class UserSwitchBanner extends StatelessWidget {
                 color: const Color(0xFF1E293B),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 onSelected: (val) {
-                  if (val == 'clear') {
+                  if (val == 'switch_family') {
+                    SwitchFamilyDialog.show(context);
+                  } else if (val == 'clear') {
                     _showClearConfirmDialog(context, repo);
                   }
                 },
                 itemBuilder: (ctx) => [
+                  const PopupMenuItem(
+                    value: 'switch_family',
+                    child: Row(
+                      children: [
+                        Icon(Icons.swap_horiz, size: 18, color: Color(0xFF818CF8)),
+                        SizedBox(width: 8),
+                        Text('Switch Family Workspace', style: TextStyle(fontSize: 13, color: Colors.white)),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuDivider(),
                   const PopupMenuItem(
                     value: 'clear',
                     child: Row(
                       children: [
                         Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
                         SizedBox(width: 8),
-                        Text('Clear All Data / Reset', style: TextStyle(fontSize: 13, color: Colors.redAccent)),
+                        Text('Clear Family Data', style: TextStyle(fontSize: 13, color: Colors.redAccent)),
                       ],
                     ),
                   ),
