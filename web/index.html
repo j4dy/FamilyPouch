@@ -8,6 +8,11 @@
   <meta name="description" content="FamilyPouch - Smart family accounting, receipt OCR, cash float & bill splitting for employers and helper.">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
+  <!-- Cache control meta tags -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -22,6 +27,16 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body style="margin: 0; background-color: #0B0F19; overflow: hidden;">
+  <script>
+    // Automatically update service worker on refresh
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(registrations) {
+        for (var registration of registrations) {
+          registration.update();
+        }
+      });
+    }
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
