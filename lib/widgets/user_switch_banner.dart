@@ -6,6 +6,47 @@ import '../services/accounting_repository.dart';
 class UserSwitchBanner extends StatelessWidget {
   const UserSwitchBanner({super.key});
 
+  void _showClearConfirmDialog(BuildContext context, AccountingRepository repo) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Row(
+          children: [
+            Icon(Icons.delete_forever, color: Colors.redAccent),
+            SizedBox(width: 8),
+            Text('Clear All Records?'),
+          ],
+        ),
+        content: const Text(
+          'This will permanently erase all expenses, cash top-ups, claims, and reset the ledger to a completely empty state.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () async {
+              await repo.clearAllData();
+              if (context.mounted) {
+                Navigator.of(ctx).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('All data has been cleared! Starting fresh.'),
+                    backgroundColor: Color(0xFF10B981),
+                  ),
+                );
+              }
+            },
+            child: const Text('Clear Everything'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final repo = context.watch<AccountingRepository>();
@@ -125,6 +166,32 @@ class UserSwitchBanner extends StatelessWidget {
                     );
                   }).toList(),
                 ),
+              ),
+
+              const SizedBox(width: 6),
+
+              // Options Menu
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, size: 20, color: Colors.grey),
+                color: const Color(0xFF1E293B),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                onSelected: (val) {
+                  if (val == 'clear') {
+                    _showClearConfirmDialog(context, repo);
+                  }
+                },
+                itemBuilder: (ctx) => [
+                  const PopupMenuItem(
+                    value: 'clear',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
+                        SizedBox(width: 8),
+                        Text('Clear All Data / Reset', style: TextStyle(fontSize: 13, color: Colors.redAccent)),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ],
           );

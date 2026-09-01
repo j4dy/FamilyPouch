@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_role.dart';
 import '../models/payment_source.dart';
@@ -8,15 +9,14 @@ import '../models/expense.dart';
 import '../models/cash_topup.dart';
 import '../models/reimbursement_claim.dart';
 import '../models/settlement_cycle.dart';
-import 'mock_seed_data.dart';
 
 class AccountingRepository extends ChangeNotifier {
   UserRole _currentUser = UserRole.mother;
-  List<Expense> _expenses = List.from(MockSeedData.initialExpenses);
-  List<CashTopUp> _cashTopUps = List.from(MockSeedData.initialTopUps);
-  List<ReimbursementClaim> _claims = List.from(MockSeedData.initialClaims);
-  List<SettlementCycle> _cycles = List.from(MockSeedData.initialCycles);
-  String _selectedCycleId = 'cycle-aug-2026';
+  List<Expense> _expenses = [];
+  List<CashTopUp> _cashTopUps = [];
+  List<ReimbursementClaim> _claims = [];
+  List<SettlementCycle> _cycles = [];
+  String _selectedCycleId = '';
   bool _isInitialized = false;
 
   UserRole get currentUser => _currentUser;
@@ -27,9 +27,23 @@ class AccountingRepository extends ChangeNotifier {
   String get selectedCycleId => _selectedCycleId;
   bool get isInitialized => _isInitialized;
 
+  static SettlementCycle createDefaultCurrentCycle() {
+    final now = DateTime.now();
+    final monthName = DateFormat('MMMM yyyy').format(now);
+    final start = DateTime(now.year, now.month, 1);
+    final end = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+    return SettlementCycle(
+      id: 'cycle-${now.year}-${now.month.toString().padLeft(2, '0')}',
+      title: '$monthName (Current Cycle)',
+      startDate: start,
+      endDate: end,
+      isClosed: false,
+    );
+  }
+
   SettlementCycle get currentCycle {
     if (_cycles.isEmpty) {
-      return MockSeedData.initialCycles.first;
+      return createDefaultCurrentCycle();
     }
     return _cycles.firstWhere(
       (c) => c.id == _selectedCycleId,
@@ -38,6 +52,9 @@ class AccountingRepository extends ChangeNotifier {
   }
 
   AccountingRepository() {
+    final def = createDefaultCurrentCycle();
+    _cycles = [def];
+    _selectedCycleId = def.id;
     _loadFromStorage();
   }
 
@@ -100,7 +117,7 @@ class AccountingRepository extends ChangeNotifier {
     final targetId = cycleId ?? _selectedCycleId;
     final cycle = _cycles.firstWhere(
       (c) => c.id == targetId,
-      orElse: () => _cycles.first,
+      orElse: () => currentCycle,
     );
 
     final cycleExps = _expenses.where((e) => e.cycleId == targetId).toList();
@@ -264,12 +281,20 @@ class AccountingRepository extends ChangeNotifier {
     }
   }
 
-  void resetToSampleData() {
-    _expenses = MockSeedData.initialExpenses;
-    _cashTopUps = MockSeedData.initialTopUps;
-    _claims = MockSeedData.initialClaims;
-    _cycles = MockSeedData.initialCycles;
-    _selectedCycleId = 'cycle-aug-2026';
+  /// Completely clears all data to start fresh
+  Future<void> clearAllData() async {
+    _expenses = [];
+    _cashTopUps = [];
+    _claims = [];
+    final def = createDefaultCurrentCycle();
+    _cycles = [def];
+    _selectedCycleId = def.id;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+    } catch (_) {}
+
     _saveToStorage();
     notifyListeners();
   }
@@ -279,6 +304,24 @@ class AccountingRepository extends ChangeNotifier {
   Future<void> _loadFromStorage() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      
+      // Clean start flag: if fp_initialized_v2 is missing, reset any old test data
+      final isV2 = prefs.getBool('fp_clean_v2') ?? false;
+      if (!isV2) {
+        await prefs.clear();
+        await prefs.setBool('fp_clean_v2', true);
+        _expenses = [];
+        _cashTopUps = [];
+        _claims = [];
+        final def = createDefaultCurrentCycle();
+        _cycles = [def];
+        _selectedCycleId = def.id;
+        _saveToStorage();
+        _isInitialized = true;
+        notifyListeners();
+        return;
+      }
+
       final expJson = prefs.getString('fp_expenses');
       final topUpJson = prefs.getString('fp_topups');
       final claimsJson = prefs.getString('fp_claims');
@@ -288,35 +331,41 @@ class AccountingRepository extends ChangeNotifier {
         final List list = jsonDecode(expJson);
         _expenses = list.map((e) => Expense.fromJson(e)).toList();
       } else {
-        _expenses = MockSeedData.initialExpenses;
+        _expenses = [];
       }
 
       if (topUpJson != null) {
         final List list = jsonDecode(topUpJson);
         _cashTopUps = list.map((e) => CashTopUp.fromJson(e)).toList();
       } else {
-        _cashTopUps = MockSeedData.initialTopUps;
+        _cashTopUps = [];
       }
 
       if (claimsJson != null) {
         final List list = jsonDecode(claimsJson);
         _claims = list.map((e) => ReimbursementClaim.fromJson(e)).toList();
       } else {
-        _claims = MockSeedData.initialClaims;
+        _claims = [];
       }
 
       if (cyclesJson != null) {
         final List list = jsonDecode(cyclesJson);
         _cycles = list.map((e) => SettlementCycle.fromJson(e)).toList();
       } else {
-        _cycles = MockSeedData.initialCycles;
+        _cycles = [createDefaultCurrentCycle()];
+      }
+
+      if (_cycles.isNotEmpty) {
+        _selectedCycleId = _cycles.first.id;
       }
     } catch (e) {
       debugPrint('Error loading storage: $e');
-      _expenses = MockSeedData.initialExpenses;
-      _cashTopUps = MockSeedData.initialTopUps;
-      _claims = MockSeedData.initialClaims;
-      _cycles = MockSeedData.initialCycles;
+      _expenses = [];
+      _cashTopUps = [];
+      _claims = [];
+      final def = createDefaultCurrentCycle();
+      _cycles = [def];
+      _selectedCycleId = def.id;
     }
 
     _isInitialized = true;
@@ -326,6 +375,7 @@ class AccountingRepository extends ChangeNotifier {
   Future<void> _saveToStorage() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('fp_clean_v2', true);
       await prefs.setString(
           'fp_expenses', jsonEncode(_expenses.map((e) => e.toJson()).toList()));
       await prefs.setString(
