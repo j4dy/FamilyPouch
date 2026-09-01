@@ -305,10 +305,10 @@ class AccountingRepository extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       
-      final expJson = prefs.getString('fp_expenses');
-      final topUpJson = prefs.getString('fp_topups');
-      final claimsJson = prefs.getString('fp_claims');
-      final cyclesJson = prefs.getString('fp_cycles');
+      final expJson = prefs.getString('fp_v5_expenses');
+      final topUpJson = prefs.getString('fp_v5_topups');
+      final claimsJson = prefs.getString('fp_v5_claims');
+      final cyclesJson = prefs.getString('fp_v5_cycles');
 
       if (expJson != null) {
         final List list = jsonDecode(expJson);
@@ -367,15 +367,14 @@ class AccountingRepository extends ChangeNotifier {
   Future<void> _saveToStorage() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('fp_clean_v2', true);
       await prefs.setString(
-          'fp_expenses', jsonEncode(_expenses.map((e) => e.toJson()).toList()));
+          'fp_v5_expenses', jsonEncode(_expenses.map((e) => e.toJson()).toList()));
       await prefs.setString(
-          'fp_topups', jsonEncode(_cashTopUps.map((e) => e.toJson()).toList()));
+          'fp_v5_topups', jsonEncode(_cashTopUps.map((e) => e.toJson()).toList()));
       await prefs.setString(
-          'fp_claims', jsonEncode(_claims.map((e) => e.toJson()).toList()));
+          'fp_v5_claims', jsonEncode(_claims.map((e) => e.toJson()).toList()));
       await prefs.setString(
-          'fp_cycles', jsonEncode(_cycles.map((e) => e.toJson()).toList()));
+          'fp_v5_cycles', jsonEncode(_cycles.map((e) => e.toJson()).toList()));
     } catch (e) {
       debugPrint('Error saving storage: $e');
     }

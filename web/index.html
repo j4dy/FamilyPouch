@@ -8,8 +8,8 @@
   <meta name="description" content="FamilyPouch - Smart family accounting, receipt OCR, cash float & bill splitting for employers and helper.">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-  <!-- Force no-cache -->
-  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <!-- Force No-Cache Headers in HTML -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate, max-age=0" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
 
@@ -28,29 +28,40 @@
 </head>
 <body style="margin: 0; background-color: #0B0F19; overflow: hidden;">
   <script>
-    // Force unregister all old service workers
+    // 1. Unregister all service workers immediately
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(function(registrations) {
-        for (var reg of registrations) {
-          reg.unregister();
+      navigator.serviceWorker.getRegistrations().then(function(regs) {
+        for (var r of regs) {
+          r.unregister();
         }
       });
     }
-    // Delete all browser CacheStorage
+
+    // 2. Clear CacheStorage
     if ('caches' in window) {
-      caches.keys().then(function(names) {
-        for (var name of names) {
-          caches.delete(name);
+      caches.keys().then(function(keys) {
+        for (var k of keys) {
+          caches.delete(k);
         }
       });
     }
-    // Purge legacy storage keys once
+
+    // 3. Clear legacy localStorage keys from old mock data
     try {
-      if (!localStorage.getItem('fp_v4_purged')) {
-        localStorage.clear();
-        localStorage.setItem('fp_v4_purged', 'true');
+      var keysToRemove = [
+        'flutter.fp_expenses',
+        'flutter.fp_topups',
+        'flutter.fp_claims',
+        'flutter.fp_cycles',
+        'fp_expenses',
+        'fp_topups',
+        'fp_claims',
+        'fp_cycles'
+      ];
+      for (var key of keysToRemove) {
+        localStorage.removeItem(key);
       }
-    } catch(e) {}
+    } catch (e) {}
   </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
