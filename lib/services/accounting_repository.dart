@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/user_role.dart';
 import '../models/payment_source.dart';
 import '../models/claim_status.dart';
@@ -18,6 +20,12 @@ class AccountingRepository extends ChangeNotifier {
   List<SettlementCycle> _cycles = [];
   String _selectedCycleId = '';
   bool _isInitialized = false;
+  bool _isUsingFirestore = false;
+
+  StreamSubscription? _expensesSub;
+  StreamSubscription? _topUpsSub;
+  StreamSubscription? _claimsSub;
+  StreamSubscription? _cyclesSub;
 
   UserRole get currentUser => _currentUser;
   List<Expense> get expenses => List.unmodifiable(_expenses);
@@ -26,6 +34,7 @@ class AccountingRepository extends ChangeNotifier {
   List<SettlementCycle> get cycles => List.unmodifiable(_cycles);
   String get selectedCycleId => _selectedCycleId;
   bool get isInitialized => _isInitialized;
+  bool get isUsingFirestore => _isUsingFirestore;
 
   static SettlementCycle createDefaultCurrentCycle() {
     final now = DateTime.now();
@@ -55,7 +64,12 @@ class AccountingRepository extends ChangeNotifier {
     final def = createDefaultCurrentCycle();
     _cycles = [def];
     _selectedCycleId = def.id;
-    _loadFromStorage();
+    _initRepository();
+  }
+
+  Future<void> _initRepository() async {
+    await _loadFromLocalStorage();
+    _initFirestoreSync();
   }
 
   void switchUser(UserRole role) {
@@ -72,32 +86,107 @@ class AccountingRepository extends ChangeNotifier {
     }
   }
 
+  // --- Real-time Firestore Sync Engine ---
+
+  void _initFirestoreSync() {
+    try {
+      final db = FirebaseFirestore.instance;
+
+      // 1. Expenses Stream
+      _expensesSub = db.collection('family_expenses').snapshots().listen(
+        (snapshot) {
+          _isUsingFirestore = true;
+          _expenses = snapshot.docs.map((doc) {
+            final data = doc.data();
+            return Expense.fromJson(data);
+          }).toList();
+          _expenses.sort((a, b) => b.date.compareTo(a.date));
+          _saveToLocalStorage();
+          notifyListeners();
+        },
+        onError: (e) {
+          debugPrint('Firestore expenses stream error: $e');
+        },
+      );
+
+      // 2. Cash Top-ups Stream
+      _topUpsSub = db.collection('family_topups').snapshots().listen(
+        (snapshot) {
+          _isUsingFirestore = true;
+          _cashTopUps = snapshot.docs.map((doc) {
+            return CashTopUp.fromJson(doc.data());
+          }).toList();
+          _cashTopUps.sort((a, b) => b.date.compareTo(a.date));
+          _saveToLocalStorage();
+          notifyListeners();
+        },
+        onError: (e) {
+          debugPrint('Firestore topups stream error: $e');
+        },
+      );
+
+      // 3. Claims Stream
+      _claimsSub = db.collection('family_claims').snapshots().listen(
+        (snapshot) {
+          _isUsingFirestore = true;
+          _claims = snapshot.docs.map((doc) {
+            return ReimbursementClaim.fromJson(doc.data());
+          }).toList();
+          _claims.sort((a, b) => b.submittedAt.compareTo(a.submittedAt));
+          _saveToLocalStorage();
+          notifyListeners();
+        },
+        onError: (e) {
+          debugPrint('Firestore claims stream error: $e');
+        },
+      );
+
+      // 4. Cycles Stream
+      _cyclesSub = db.collection('family_cycles').snapshots().listen(
+        (snapshot) {
+          _isUsingFirestore = true;
+          if (snapshot.docs.isNotEmpty) {
+            _cycles = snapshot.docs.map((doc) {
+              return SettlementCycle.fromJson(doc.data());
+            }).toList();
+            _cycles.sort((a, b) => b.startDate.compareTo(a.startDate));
+            if (!_cycles.any((c) => c.id == _selectedCycleId)) {
+              _selectedCycleId = _cycles.first.id;
+            }
+          }
+          _saveToLocalStorage();
+          notifyListeners();
+        },
+        onError: (e) {
+          debugPrint('Firestore cycles stream error: $e');
+        },
+      );
+    } catch (e) {
+      debugPrint('Firestore not yet provisioned: $e');
+    }
+  }
+
   // --- Financial Balances & Calculations ---
 
-  /// Total Top-ups given to Helper from Joint Account
   double get totalCashTopUpsAmount {
     return _cashTopUps.fold(0.0, (sum, t) => sum + t.amount);
   }
 
-  /// Total Grocery Cash spent by Helper
   double get totalHelperGroceryCashSpent {
     return _expenses
         .where((e) => e.payer.isHelper && e.paymentSource == PaymentSource.groceryCash)
         .fold(0.0, (sum, e) => sum + e.amount);
   }
 
-  /// Remaining Grocery Cash Float held by Helper
   double get helperGroceryCashBalance {
     final bal = totalCashTopUpsAmount - totalHelperGroceryCashSpent;
     return bal > 0 ? bal : 0.0;
   }
 
-  /// Pending out-of-pocket claims awaiting employer settlement
   List<ReimbursementClaim> get pendingClaims {
     return _claims.where((c) => c.status == ClaimStatus.pendingApproval).toList();
   }
 
-  /// Unclaimed out-of-pocket expenses for current user
   List<Expense> get unclaimedExpensesForCurrentUser {
     return _expenses
         .where((e) =>
@@ -107,12 +196,10 @@ class AccountingRepository extends ChangeNotifier {
         .toList();
   }
 
-  /// Current cycle expenses
   List<Expense> get currentCycleExpenses {
     return _expenses.where((e) => e.cycleId == _selectedCycleId).toList();
   }
 
-  /// Generate comprehensive bill split and settlement report
   CycleSummaryReport generateCycleReport({String? cycleId}) {
     final targetId = cycleId ?? _selectedCycleId;
     final cycle = _cycles.firstWhere(
@@ -164,37 +251,73 @@ class AccountingRepository extends ChangeNotifier {
 
   // --- Mutation Methods ---
 
-  void addExpense(Expense expense) {
+  Future<void> addExpense(Expense expense) async {
     _expenses.insert(0, expense);
-    _saveToStorage();
+    _saveToLocalStorage();
     notifyListeners();
-  }
 
-  void updateExpense(Expense updated) {
-    final idx = _expenses.indexWhere((e) => e.id == updated.id);
-    if (idx != -1) {
-      _expenses[idx] = updated;
-      _saveToStorage();
-      notifyListeners();
+    try {
+      await FirebaseFirestore.instance
+          .collection('family_expenses')
+          .doc(expense.id)
+          .set(expense.toJson());
+    } catch (e) {
+      debugPrint('Firestore addExpense fallback: $e');
     }
   }
 
-  void deleteExpense(String expenseId) {
+  Future<void> updateExpense(Expense updated) async {
+    final idx = _expenses.indexWhere((e) => e.id == updated.id);
+    if (idx != -1) {
+      _expenses[idx] = updated;
+      _saveToLocalStorage();
+      notifyListeners();
+    }
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('family_expenses')
+          .doc(updated.id)
+          .set(updated.toJson());
+    } catch (e) {
+      debugPrint('Firestore updateExpense fallback: $e');
+    }
+  }
+
+  Future<void> deleteExpense(String expenseId) async {
     _expenses.removeWhere((e) => e.id == expenseId);
-    _saveToStorage();
+    _saveToLocalStorage();
     notifyListeners();
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('family_expenses')
+          .doc(expenseId)
+          .delete();
+    } catch (e) {
+      debugPrint('Firestore deleteExpense fallback: $e');
+    }
   }
 
-  void addCashTopUp(CashTopUp topUp) {
+  Future<void> addCashTopUp(CashTopUp topUp) async {
     _cashTopUps.insert(0, topUp);
-    _saveToStorage();
+    _saveToLocalStorage();
     notifyListeners();
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('family_topups')
+          .doc(topUp.id)
+          .set(topUp.toJson());
+    } catch (e) {
+      debugPrint('Firestore addCashTopUp fallback: $e');
+    }
   }
 
-  void submitReimbursementClaim({
+  Future<void> submitReimbursementClaim({
     required List<String> expenseIds,
     required String notes,
-  }) {
+  }) async {
     if (expenseIds.isEmpty) return;
 
     final claimExpenses =
@@ -215,26 +338,40 @@ class AccountingRepository extends ChangeNotifier {
 
     _claims.insert(0, claim);
 
-    // Update expense statuses
     for (int i = 0; i < _expenses.length; i++) {
       if (expenseIds.contains(_expenses[i].id)) {
         _expenses[i] = _expenses[i].copyWith(
           claimStatus: ClaimStatus.pendingApproval,
           claimId: claimId,
         );
+        try {
+          FirebaseFirestore.instance
+              .collection('family_expenses')
+              .doc(_expenses[i].id)
+              .set(_expenses[i].toJson());
+        } catch (_) {}
       }
     }
 
-    _saveToStorage();
+    _saveToLocalStorage();
     notifyListeners();
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('family_claims')
+          .doc(claim.id)
+          .set(claim.toJson());
+    } catch (e) {
+      debugPrint('Firestore submitClaim fallback: $e');
+    }
   }
 
-  void settleClaim({
+  Future<void> settleClaim({
     required String claimId,
     required String? transferProofPhotoBase64,
     required String transferReference,
     required String notes,
-  }) {
+  }) async {
     final claimIdx = _claims.indexWhere((c) => c.id == claimId);
     if (claimIdx == -1) return;
 
@@ -250,24 +387,38 @@ class AccountingRepository extends ChangeNotifier {
 
     _claims[claimIdx] = updated;
 
-    // Mark linked expenses as settled
     for (int i = 0; i < _expenses.length; i++) {
       if (existing.expenseIds.contains(_expenses[i].id)) {
         _expenses[i] = _expenses[i].copyWith(
           claimStatus: ClaimStatus.settled,
         );
+        try {
+          FirebaseFirestore.instance
+              .collection('family_expenses')
+              .doc(_expenses[i].id)
+              .set(_expenses[i].toJson());
+        } catch (_) {}
       }
     }
 
-    _saveToStorage();
+    _saveToLocalStorage();
     notifyListeners();
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('family_claims')
+          .doc(updated.id)
+          .set(updated.toJson());
+    } catch (e) {
+      debugPrint('Firestore settleClaim fallback: $e');
+    }
   }
 
-  void closeSettlementCycle(String cycleId) {
+  Future<void> closeSettlementCycle(String cycleId) async {
     final idx = _cycles.indexWhere((c) => c.id == cycleId);
     if (idx != -1) {
       final existing = _cycles[idx];
-      _cycles[idx] = SettlementCycle(
+      final updated = SettlementCycle(
         id: existing.id,
         title: existing.title,
         startDate: existing.startDate,
@@ -276,12 +427,21 @@ class AccountingRepository extends ChangeNotifier {
         closedAt: DateTime.now(),
         closedBy: _currentUser,
       );
-      _saveToStorage();
+      _cycles[idx] = updated;
+      _saveToLocalStorage();
       notifyListeners();
+
+      try {
+        await FirebaseFirestore.instance
+          .collection('family_cycles')
+          .doc(updated.id)
+          .set(updated.toJson());
+      } catch (e) {
+        debugPrint('Firestore closeCycle fallback: $e');
+      }
     }
   }
 
-  /// Completely clears all data to start fresh
   Future<void> clearAllData() async {
     _expenses = [];
     _cashTopUps = [];
@@ -295,16 +455,33 @@ class AccountingRepository extends ChangeNotifier {
       await prefs.clear();
     } catch (_) {}
 
-    _saveToStorage();
+    _saveToLocalStorage();
     notifyListeners();
+
+    try {
+      final db = FirebaseFirestore.instance;
+      final exps = await db.collection('family_expenses').get();
+      for (var d in exps.docs) {
+        await d.reference.delete();
+      }
+      final tops = await db.collection('family_topups').get();
+      for (var d in tops.docs) {
+        await d.reference.delete();
+      }
+      final clms = await db.collection('family_claims').get();
+      for (var d in clms.docs) {
+        await d.reference.delete();
+      }
+    } catch (e) {
+      debugPrint('Firestore clearAllData fallback: $e');
+    }
   }
 
-  // --- Persistence Layer ---
+  // --- Local Storage Layer ---
 
-  Future<void> _loadFromStorage() async {
+  Future<void> _loadFromLocalStorage() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      
       final expJson = prefs.getString('fp_v5_expenses');
       final topUpJson = prefs.getString('fp_v5_topups');
       final claimsJson = prefs.getString('fp_v5_claims');
@@ -338,18 +515,10 @@ class AccountingRepository extends ChangeNotifier {
         _cycles = [createDefaultCurrentCycle()];
       }
 
-      // Force purge any legacy mock test data
-      _expenses.removeWhere((e) => e.id.startsWith('exp-') || e.cycleId == 'cycle-aug-2026');
-      _cashTopUps.removeWhere((t) => t.id.startsWith('topup-'));
-      _claims.removeWhere((c) => c.id.startsWith('claim-1') || c.id.startsWith('claim-past-1'));
-      _cycles.removeWhere((c) => c.id == 'cycle-aug-2026' || c.id == 'cycle-jul-2026');
-
       if (_cycles.isEmpty) {
         _cycles = [createDefaultCurrentCycle()];
       }
       _selectedCycleId = _cycles.first.id;
-
-      await _saveToStorage();
     } catch (e) {
       debugPrint('Error loading storage: $e');
       _expenses = [];
@@ -364,7 +533,7 @@ class AccountingRepository extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _saveToStorage() async {
+  Future<void> _saveToLocalStorage() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
@@ -378,5 +547,14 @@ class AccountingRepository extends ChangeNotifier {
     } catch (e) {
       debugPrint('Error saving storage: $e');
     }
+  }
+
+  @override
+  void dispose() {
+    _expensesSub?.cancel();
+    _topUpsSub?.cancel();
+    _claimsSub?.cancel();
+    _cyclesSub?.cancel();
+    super.dispose();
   }
 }
