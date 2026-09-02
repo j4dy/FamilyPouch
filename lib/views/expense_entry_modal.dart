@@ -596,9 +596,8 @@ class _ExpenseEntryModalState extends State<ExpenseEntryModal> {
           ),
           const SizedBox(height: 10),
 
-          // Instant Demo Test Receipts
           Text(
-            'Or test with sample store receipts:',
+            'Or test with sample receipt templates:',
             style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
           ),
           const SizedBox(height: 6),
@@ -606,10 +605,10 @@ class _ExpenseEntryModalState extends State<ExpenseEntryModal> {
             spacing: 6,
             runSpacing: 6,
             children: [
-              _buildQuickSampleChip('Wellcome', 'wellcome', Icons.local_grocery_store),
-              _buildQuickSampleChip('Watsons', 'watsons', Icons.medication),
-              _buildQuickSampleChip('PARKnSHOP', 'parknshop', Icons.shopping_basket),
-              _buildQuickSampleChip('CLP Power', 'clp', Icons.bolt),
+              _buildQuickSampleChip('Supermarket', 'supermarket', Icons.local_grocery_store),
+              _buildQuickSampleChip('Pharmacy', 'pharmacy', Icons.medication),
+              _buildQuickSampleChip('Utility Bill', 'utility', Icons.bolt),
+              _buildQuickSampleChip('Coffee & Cafe', 'coffee', Icons.coffee),
             ],
           ),
         ],

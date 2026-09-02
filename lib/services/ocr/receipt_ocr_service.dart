@@ -4,7 +4,7 @@ import 'ocr_result.dart';
 import 'receipt_parser_rules.dart';
 
 class ReceiptOcrService {
-  /// Analyzes an image (bytes) or text and returns the parsed OCR result
+  /// Analyzes an image (bytes) or raw text and returns the parsed OCR result
   static Future<OcrResult> processReceiptImage({
     Uint8List? imageBytes,
     String? rawTextInput,
@@ -17,18 +17,16 @@ class ReceiptOcrService {
       return ReceiptParserRules.parse(rawTextInput);
     }
 
-    // If fileName or image metadata hints at sample receipt:
     final nameLower = (fileName ?? '').toLowerCase();
 
-    if (nameLower.contains('watsons') || nameLower.contains('pharmacy') || nameLower.contains('panadol')) {
-      return ReceiptParserRules.parse(_sampleWatsonsReceipt);
-    } else if (nameLower.contains('clp') || nameLower.contains('power') || nameLower.contains('electric')) {
-      return ReceiptParserRules.parse(_sampleClpReceipt);
-    } else if (nameLower.contains('parknshop') || nameLower.contains('pns')) {
-      return ReceiptParserRules.parse(_sampleParknshopReceipt);
+    if (nameLower.contains('pharmacy') || nameLower.contains('medical') || nameLower.contains('health')) {
+      return ReceiptParserRules.parse(_samplePharmacyReceipt);
+    } else if (nameLower.contains('utility') || nameLower.contains('electric') || nameLower.contains('power')) {
+      return ReceiptParserRules.parse(_sampleUtilityReceipt);
+    } else if (nameLower.contains('coffee') || nameLower.contains('cafe') || nameLower.contains('restaurant')) {
+      return ReceiptParserRules.parse(_sampleCafeReceipt);
     } else {
-      // Default realistic Wellcome receipt OCR extraction
-      return ReceiptParserRules.parse(_sampleWellcomeReceipt);
+      return ReceiptParserRules.parse(_sampleSupermarketReceipt);
     }
   }
 
@@ -36,67 +34,68 @@ class ReceiptOcrService {
     return 'data:image/jpeg;base64,${base64Encode(bytes)}';
   }
 
-  static const String _sampleWellcomeReceipt = '''
-WELLCOME SUPERMARKET
-Shop 12, Level 1, Fortune City
-Tel: 2888-1234
-Date: 2026-08-28 15:42
-Cashier: 004  Terminal: T01
+  static const String _sampleSupermarketReceipt = '''
+FRESH MARKET & GROCERY
+100 Main Street
+Tel: 555-0199
+Date: 2026-09-02 14:30
 --------------------------------
-1x Japanese Fresh Eggs 10s    HK\$28.50
-2x Organic Fresh Milk 1L      HK\$46.00
-1x Premium Thai Jasmine Rice  HK\$68.00
-1x Australian Avocados 3s     HK\$24.00
-1x Kitchen Paper Towel 4s     HK\$22.00
+1x Fresh Organic Milk 1L       \$4.50
+2x Farm Fresh Eggs 12pk        \$7.20
+1x Whole Wheat Bread           \$3.80
+1x Fresh Bananas 1kg           \$2.90
+1x Dishwashing Soap 500ml      \$4.10
 --------------------------------
-SUBTOTAL:                    HK\$188.50
-MEMBER DISCOUNT:             -HK\$10.00
-TOTAL AMOUNT:                HK\$178.50
-PAID BY: GROCERY CASH
-CHANGE:                       HK\$21.50
-Thank you for shopping at Wellcome!
+SUBTOTAL:                      \$22.50
+TAX:                           \$1.80
+TOTAL AMOUNT:                  \$24.30
+PAID BY: CASH
+--------------------------------
+Thank you for your visit!
 ''';
 
-  static const String _sampleWatsonsReceipt = '''
-WATSONS PHARMACY
-G/F Central Building, Queen's Road
-Date: 2026-08-29 11:20
-Invoice: WTS-8849102
+  static const String _samplePharmacyReceipt = '''
+CITY CARE PHARMACY
+45 Central Ave
+Date: 2026-09-02 10:15
+Invoice: #89421
 --------------------------------
-1x Panadol Extra Caplets 24s   HK\$58.00
-1x Alcohol Hand Sanitizer 500ml HK\$29.50
+1x First Aid Antiseptic Cream  \$8.50
+1x Pain Relief Caplets 24pk    \$12.90
+1x Vitamin C Tablets 100s      \$15.00
 --------------------------------
-TOTAL AMOUNT:                 HK\$87.50
-PAID BY: VISA (OUT-OF-POCKET)
-Please retain receipt for exchange.
+SUBTOTAL:                      \$36.40
+DISCOUNT:                     -\$3.00
+TOTAL AMOUNT:                  \$33.40
+PAID BY: CARD
 ''';
 
-  static const String _sampleParknshopReceipt = '''
-PARKNSHOP SUPERMARKET
-Harbour Green Branch
-Date: 2026-08-30 18:15
+  static const String _sampleUtilityReceipt = '''
+METRO ENERGY & UTILITY CO
+Monthly Electricity Statement
+Account: 9021-4820
+Date: 2026-09-01
 --------------------------------
-1x Boneless Chicken Breast     HK\$48.00
-2x Organic Broccoli 400g       HK\$32.00
-1x Dishwashing Liquid 1L       HK\$26.50
+Electricity Usage: 450 kWh    \$65.00
+Grid Service Charge:           \$15.50
+Municipal Clean Energy Fee:    \$4.50
 --------------------------------
-TOTAL:                        HK\$106.50
-PAID BY: OCTOPUS
+TOTAL AMOUNT DUE:             \$85.00
+PAID BY: AUTO DEBIT
 ''';
 
-  static const String _sampleClpReceipt = '''
-CLP POWER HONG KONG LIMITED
-Electricity Bill Receipt
-Account No: 4091-8821-09
-Billing Period: 2026-08-01 to 2026-08-31
-Date: 2026-08-31
+  static const String _sampleCafeReceipt = '''
+CORNER COFFEE & BAKERY
+88 High Street
+Date: 2026-09-02 09:40
 --------------------------------
-Total Units: 620 kWh
-Basic Charge:                 HK\$650.00
-Fuel Adjustment:              HK\$195.00
-Govt Subsidy:                -HK\$50.00
+2x Cappuccino Medium           \$9.00
+1x Butter Croissant            \$4.20
+1x Blueberry Muffin            \$3.80
 --------------------------------
-TOTAL AMOUNT DUE:             HK\$795.00
-PAID BY: JOINT AUTO-PAY
+SUBTOTAL:                      \$17.00
+SERVICE:                       \$1.70
+TOTAL:                         \$18.70
+PAID BY: CONTACTLESS
 ''';
 }
