@@ -48,6 +48,25 @@ TOTAL: \$18.00
       expect(result.totalAmount, 18.00);
     });
 
+    test('Detects Chinese 總額 and 應付總額 correctly', () {
+      const chineseReceipt = '''
+生鮮超級市場
+日期: 2026-09-02
+白米 1包 \$68.00
+鮮奶 2盒 \$42.00
+小計 \$110.00
+會員折扣 -\$10.00
+總額: \$100.00
+已付現金: \$100.00
+''';
+
+      final result = ReceiptParserRules.parse(chineseReceipt);
+
+      expect(result.merchant, '生鮮超級市場');
+      expect(result.totalAmount, 100.00);
+      expect(result.candidateAmounts, containsAll([68.00, 42.00, 110.00, 10.00, 100.00]));
+    });
+
     test('Parses itemized receipt line items', () {
       const lineItemText = '''
 ORGANIC GROCERY STORE

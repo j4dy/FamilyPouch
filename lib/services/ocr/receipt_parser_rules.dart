@@ -197,31 +197,42 @@ class ReceiptParserRules {
   }
 
   /// Universal Total Amount Detection
-  /// Finds keywords like Total, Grand Total, Net, Amount Due, etc.
+  /// Finds keywords like Total, 總額, 總計, 應付總額, 合計, Grand Total, Net, Amount Due, etc.
   static double? _detectTotalAmount(List<String> lines, List<double> candidates) {
     final totalKeywords = RegExp(
-      r'(total amount due|total amount|grand total|net amount|amount due|balance due|total to pay|total due|total bill|total|net total|montant total|importe total|gesamtbetrag|總計|合計|金額)',
+      r'(total amount due|total amount|grand total|net amount|amount due|balance due|total to pay|total due|total bill|total|net total|montant total|importe total|gesamtbetrag|總額|应付总额|應付總額|應付金額|应付金额|實付金額|实付金额|消費總額|消费总额|結算金額|结算金额|總計|总计|合計|合计|合共|金額|金额)',
       caseSensitive: false,
     );
 
-    // Scan lines from bottom up (since total is usually near the bottom)
+    // Number matching regex supporting currency symbols, commas, and decimals or whole numbers
+    final numberPattern = RegExp(r'[\$\€\£\¥\₹\s\:\：]*\b(\d{1,4}(?:,\d{3})*(?:\.\d{1,2})?)\b');
+
+    // Scan lines from bottom up (since total is usually near the bottom of receipts)
     for (int i = lines.length - 1; i >= 0; i--) {
       final line = lines[i];
       if (totalKeywords.hasMatch(line)) {
-        // Look for amount on this line
-        final amountMatch = RegExp(r'[\$\€\£\¥\₹]?\s*(\d{1,4}(?:,\d{3})*\.\d{2})').firstMatch(line);
+        // 1. Look for amount on the SAME line after/before the keyword
+        final amountMatch = RegExp(r'[\$\€\£\¥\₹]?\s*(\d{1,4}(?:,\d{3})*(?:\.\d{1,2})?)\s*$').firstMatch(line);
         if (amountMatch != null) {
           final str = amountMatch.group(1)!.replaceAll(',', '');
           final val = double.tryParse(str);
           if (val != null && val > 0) return val;
         }
 
-        // If amount is on the next line (e.g. "TOTAL\n $45.20")
+        // Try extracting any number on this line
+        final allMatches = numberPattern.allMatches(line);
+        if (allMatches.isNotEmpty) {
+          final lastMatch = allMatches.last.group(1)!.replaceAll(',', '');
+          final val = double.tryParse(lastMatch);
+          if (val != null && val > 0) return val;
+        }
+
+        // 2. If amount is on the NEXT line (e.g. "總額:\n $128.50")
         if (i + 1 < lines.length) {
           final nextLine = lines[i + 1];
-          final nextMatch = RegExp(r'[\$\€\£\¥\₹]?\s*(\d{1,4}(?:,\d{3})*\.\d{2})').firstMatch(nextLine);
-          if (nextMatch != null) {
-            final str = nextMatch.group(1)!.replaceAll(',', '');
+          final nextMatches = numberPattern.allMatches(nextLine);
+          if (nextMatches.isNotEmpty) {
+            final str = nextMatches.last.group(1)!.replaceAll(',', '');
             final val = double.tryParse(str);
             if (val != null && val > 0) return val;
           }
